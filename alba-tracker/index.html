@@ -88,7 +88,6 @@
 
   .cal-head { display: flex; align-items: center; gap: 8px; }
   .cal-head h2 { font-size: 18px; min-width: 120px; text-align: center; }
-  .cal-head .spacer { flex: 1; }
   .cal-sub { color: var(--muted); margin: 6px 0 12px; }
   .weekdays, .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
   .weekdays div { text-align: center; color: var(--muted); font-size: 12px; padding-bottom: 4px; }
@@ -107,10 +106,14 @@
   .cell.sun .num { color: var(--sun); }
   .cell.sat .num { color: var(--sat); }
   .chip {
-    font-size: 11px; border-radius: 4px; padding: 1px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: 11px; line-height: 1.25; border-radius: 4px; padding: 1px 4px; display: flex; flex-direction: column; overflow: hidden;
     border-left: 3px solid var(--c); background: color-mix(in srgb, var(--c) 22%, transparent);
   }
-  .chip.hol::after { content: " 휴"; color: var(--sun); }
+  .chip span:first-child { word-break: keep-all; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .chip .hol { color: var(--sun); }
+  .time-row { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  .time-pick { display: flex; gap: 6px; }
+  .time-pick select { flex: 1; }
 
   .day-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
   .shift { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }
@@ -159,7 +162,6 @@
   @media (max-width: 560px) {
     .cell { min-height: 64px; padding: 3px; }
     .chip { font-size: 10px; padding: 0 2px; border-left-width: 2px; }
-    .chip .nm { display: none; }
     .card { padding: 12px; }
     form.grid-form { grid-template-columns: 1fr; }
   }
@@ -181,8 +183,6 @@
       <button id="prevMonth" aria-label="이전 달">‹</button>
       <h2 id="monthLabel"></h2>
       <button id="nextMonth" aria-label="다음 달">›</button>
-      <span class="spacer"></span>
-      <button id="todayBtn">오늘</button>
     </div>
     <div class="cal-sub" id="monthStats"></div>
     <div class="weekdays"><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div>
@@ -240,6 +240,20 @@
     return m ? `${h}시간 ${m}분` : `${h}시간`;
   };
   const fmtShort = (min) => (Math.round(min / 6) / 10) + 'h';
+  const fmt12 = (t) => { const [h, m] = t.split(':').map(Number); return `${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${pad(m)}`; };
+
+  // 12시간제 시간 선택: 끝없이 도는 기본 time 입력 대신 끝이 있는 목록(오전·오후 / 시 / 5분 단위)
+  function timeSelect(name, label, value) {
+    const [h, m] = value.split(':').map(Number);
+    const mins = Array.from({ length: 12 }, (_, i) => i * 5);
+    if (!mins.includes(m)) { mins.push(m); mins.sort((a, b) => a - b); } // 출퇴근 버튼으로 찍힌 분은 바뀌지 않게 유지
+    const opt = (v, text, sel) => `<option value="${v}"${sel ? ' selected' : ''}>${text}</option>`;
+    return `<span class="time-pick">
+      <select name="${name}Ap" aria-label="${label} 오전/오후">${opt(0, '오전', h < 12)}${opt(12, '오후', h >= 12)}</select>
+      <select name="${name}H" aria-label="${label} 시">${[12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((x) => opt(x % 12, x + '시', h % 12 === x % 12)).join('')}</select>
+      <select name="${name}M" aria-label="${label} 분">${mins.map((x) => opt(x, pad(x) + '분', x === m)).join('')}</select>
+    </span>`;
+  }
   const md = (s) => { const d = parseYmd(s); return `${d.getMonth() + 1}/${d.getDate()}`; };
 
   // ───────── 저장소 (집 PC 서버) ─────────
@@ -456,7 +470,7 @@
         if (!wp) return '';
         const st = shiftStats(s);
         if (inMonth) { monthMin += st.work; monthDays.add(key); }
-        return `<div class="chip ${s.holiday ? 'hol' : ''}" style="--c:${safeColor(wp.color)}"><span class="nm">${esc(wp.name)} </span>${fmtShort(st.work)}</div>`;
+        return `<div class="chip" style="--c:${safeColor(wp.color)}"><span>${esc(wp.name)}</span><span>${fmtShort(st.work)}${s.holiday ? ' <b class="hol">휴</b>' : ''}</span></div>`;
       }).join('');
       html += `<button type="button" class="${cls}" data-date="${key}" aria-label="${d.getMonth() + 1}월 ${d.getDate()}일, 근무 ${list.length}건"><span class="num">${d.getDate()}</span>${chips}</button>`;
     }
@@ -481,7 +495,6 @@
   });
   $('prevMonth').onclick = () => { view.month -= 1; if (view.month < 0) { view.month = 11; view.year -= 1; } renderCalendar(); };
   $('nextMonth').onclick = () => { view.month += 1; if (view.month > 11) { view.month = 0; view.year += 1; } renderCalendar(); };
-  $('todayBtn').onclick = () => { selectDate(ymd(new Date())); renderAll(); };
 
   // ───────── 선택한 날짜: 근무 목록 + 입력 폼 ─────────
   function defaultTimes(wpId) {
@@ -512,7 +525,7 @@
       body += `<div class="shift">
         <span class="dot" style="background:${safeColor(wp.color)};margin-top:5px"></span>
         <div class="body">
-          <div><strong>${esc(wp.name)}</strong> ${s.start} – ${overnight ? '익일 ' : ''}${s.end}${s.holiday ? ' <span style="color:var(--sun)">휴일</span>' : ''}</div>
+          <div><strong>${esc(wp.name)}</strong> ${fmt12(s.start)} – ${overnight ? '익일 ' : ''}${fmt12(s.end)}${s.holiday ? ' <span style="color:var(--sun)">휴일</span>' : ''}</div>
           <div class="meta">실근무 ${fmtDur(p.work)}${s.breakMin ? ` (휴게 ${s.breakMin}분)` : ''}${p.night && wp.premium ? ` · 야간 ${fmtDur(p.night)}` : ''}
             · ${won(p.base + extra)}${extra ? ` (가산 ${won(extra)} 포함)` : ''}</div>
           ${s.memo ? `<div class="meta">${esc(s.memo)}</div>` : ''}
@@ -523,7 +536,7 @@
     if (view.editingId) body += shiftForm(view.editingId === 'new' ? null : data.shifts.find((s) => s.id === view.editingId));
     el.innerHTML = head + body;
     const f = $('shiftForm');
-    if (f) f.querySelector('[name=start]').focus({ preventScroll: true });
+    if (f) f.querySelector('[name=startAp]').focus({ preventScroll: true });
   }
 
   function shiftForm(s) {
@@ -533,8 +546,8 @@
       <h3 class="full">${s ? '근무 수정' : '근무 추가'}</h3>
       <label class="full">근무지<select name="wpId">${data.workplaces.map((w) =>
         `<option value="${w.id}" ${w.id === wpId ? 'selected' : ''}>${esc(w.name)} (${w.wage.toLocaleString('ko-KR')}원)</option>`).join('')}</select></label>
-      <label>시작<input type="time" name="start" value="${v.start}" required></label>
-      <label>종료<input type="time" name="end" value="${v.end}" required></label>
+      <div class="full time-row">시작${timeSelect('start', '시작', v.start)}</div>
+      <div class="full time-row">종료${timeSelect('end', '종료', v.end)}</div>
       <label>휴게시간 (분)<input type="number" name="breakMin" min="0" step="5" value="${v.breakMin || 0}"></label>
       <label class="check" style="align-self:end;padding-bottom:6px"><input type="checkbox" name="holiday" ${v.holiday ? 'checked' : ''}> 휴일 근무</label>
       <label class="full">메모<input name="memo" maxlength="100" value="${esc(v.memo || '')}" placeholder="선택"></label>
@@ -564,8 +577,8 @@
     const f = new FormData(e.target);
     const rec = {
       wpId: f.get('wpId'),
-      start: f.get('start'),
-      end: f.get('end'),
+      start: `${pad(Number(f.get('startAp')) + Number(f.get('startH')))}:${pad(f.get('startM'))}`,
+      end: `${pad(Number(f.get('endAp')) + Number(f.get('endH')))}:${pad(f.get('endM'))}`,
       breakMin: Math.max(0, parseInt(f.get('breakMin'), 10) || 0),
       holiday: f.get('holiday') === 'on',
       memo: String(f.get('memo') || '').trim(),
@@ -726,6 +739,7 @@
     eq('말일 마감 2월', periodFor('2026-02-15', 31), { start: '2026-02-01', end: '2026-02-28' });
     eq('30일 마감, 2월 말일 다음날 시작', periodFor('2026-03-01', 30), { start: '2026-03-01', end: '2026-03-30' });
     const r = summarize(cafe, '2026-11-01', '2026-11-30');
+    eq('12시간제 표시', ['00:05', '11:55', '12:00', '23:30'].map(fmt12), ['오전 12:05', '오전 11:55', '오후 12:00', '오후 11:30']);
     eq('11월 합계', [r.base, r.night, r.hol, r.weekly, r.total], [365000, 57500, 50000, 58000, 530500]);
     data = real;
     console.log('알바 기록장 자체 점검 완료 (실패가 있으면 위에 Assertion failed 표시)');
