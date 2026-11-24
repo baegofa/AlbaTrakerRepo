@@ -171,10 +171,6 @@
   <div class="punch" id="punch"></div>
   <div class="actions">
     <button id="btnWorkplaces">근무지 관리</button>
-    <button id="btnExport" title="백업 폴더의 alba-backup.json에 저장 (처음 한 번 alba-tracker/backup 폴더 선택)">내보내기</button>
-    <button id="btnImport" title="백업 폴더의 alba-backup.json 불러오기">가져오기</button>
-    <button id="btnBackupDir" class="ghost" title="내보내기·가져오기에 쓸 폴더 다시 선택">백업 폴더</button>
-    <input type="file" id="importFile" accept="application/json,.json" hidden>
     <button id="btnTheme" class="ghost" title="테마 전환"></button>
   </div>
 </header>
@@ -224,7 +220,6 @@
   'use strict';
 
   // ───────── 상수 · 유틸 ─────────
-  const KEY = 'alba-tracker-v1';
   const MIN_WAGE = 10320; // 2026년 최저시급
   const PALETTE = ['#7c9cff', '#4fd1a5', '#ffb454', '#ff7eb6', '#b48cff', '#5cc8ff', '#ff8a65'];
   const WD = ['일', '월', '화', '수', '목', '금', '토'];
@@ -247,28 +242,35 @@
   const fmtShort = (min) => (Math.round(min / 6) / 10) + 'h';
   const md = (s) => { const d = parseYmd(s); return `${d.getMonth() + 1}/${d.getDate()}`; };
 
-  // ───────── 저장소 ─────────
-  function emptyData() { return { version: 1, workplaces: [], shifts: [], active: null }; }
-  function load() {
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (!raw) return emptyData();
-      const d = JSON.parse(raw);
-      return isValidData(d) ? d : emptyData();
-    } catch (e) { return emptyData(); }
-  }
-  function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(data)); }
-    catch (e) { alert('저장에 실패했습니다. 브라우저 저장소를 확인하세요.\n' + e.message); }
-  }
-  function isValidData(d) {
-    return d && Array.isArray(d.workplaces) && Array.isArray(d.shifts) &&
-      d.workplaces.every((w) => w && typeof w.id === 'string' && typeof w.name === 'string' && Number.isFinite(w.wage)) &&
-      d.shifts.every((s) => s && typeof s.id === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.date) &&
-        /^\d{2}:\d{2}$/.test(s.start) && /^\d{2}:\d{2}$/.test(s.end));
+  // ───────── 저장소 (집 PC 서버) ─────────
+  let data = { version: 1, workplaces: [], shifts: [], active: null };
+  let rev = 0; // 서버 데이터 버전. 다른 기기가 먼저 저장했는지 판별용
+  let saving = Promise.resolve();
+
+  async function load() {
+    const r = await fetch('/api/data', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    ({ data, rev } = await r.json());
   }
 
-  let data = load();
+  // 저장은 하나씩 순서대로 보낸다: 연달아 저장해도 rev가 꼬이지 않게
+  function save() {
+    saving = saving.then(async () => {
+      const r = await fetch('/api/data', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rev, data }),
+      });
+      if (r.status === 409) {
+        ({ data, rev } = await r.json());
+        view.editingId = null;
+        renderAll();
+        alert('다른 기기에서 먼저 수정해서 방금 변경은 저장되지 않았습니다. 최신 기록을 불러왔으니 다시 입력해 주세요.');
+        return;
+      }
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'HTTP ' + r.status);
+      rev = (await r.json()).rev;
+    }).catch((e) => alert('서버에 저장하지 못했습니다. 집 PC 서버가 켜져 있는지 확인하세요.\n' + e.message));
+  }
+
   const wpById = (id) => data.workplaces.find((w) => w.id === id);
 
   // ───────── 임금 계산 ─────────
@@ -686,91 +688,6 @@
     save(); resetWpForm(); renderWpList(); renderPunch(); renderDay(); renderPay(); renderCalendar();
   });
 
-  // ───────── 백업 ─────────
-  // Chrome·Edge: 한 번 고른 폴더의 alba-backup.json 하나로 내보내기·가져오기. 그 외 브라우저는 다운로드/파일 선택.
-  const BACKUP_FILE = 'alba-backup.json';
-  const canPickDir = 'showDirectoryPicker' in window;
-
-  // 폴더 핸들은 localStorage에 못 넣으므로 IndexedDB에 보관
-  function idb(mode, fn) {
-    return new Promise((resolve, reject) => {
-      const open = indexedDB.open('alba-tracker', 1);
-      open.onupgradeneeded = () => open.result.createObjectStore('kv');
-      open.onerror = () => reject(open.error);
-      open.onsuccess = () => {
-        const tx = open.result.transaction('kv', mode);
-        const req = fn(tx.objectStore('kv'));
-        tx.oncomplete = () => resolve(req.result);
-        tx.onerror = () => reject(tx.error);
-      };
-    });
-  }
-
-  async function backupDir(pickNew) {
-    let dir = pickNew ? null : await idb('readonly', (s) => s.get('dir')).catch(() => null);
-    if (!dir) {
-      dir = await window.showDirectoryPicker({ id: 'alba-backup', mode: 'readwrite' });
-      await idb('readwrite', (s) => s.put(dir, 'dir'));
-    }
-    if (await dir.requestPermission({ mode: 'readwrite' }) !== 'granted') throw new Error('백업 폴더 접근 권한이 거부되었습니다.');
-    return dir;
-  }
-
-  function importText(text) {
-    const d = JSON.parse(text);
-    if (!isValidData(d)) throw new Error('알바 기록장 백업 형식이 아닙니다.');
-    if (!confirm(`근무지 ${d.workplaces.length}곳, 근무 ${d.shifts.length}건을 불러옵니다.\n현재 데이터는 모두 대체됩니다. 계속할까요?`)) return;
-    data = { ...emptyData(), ...d };
-    save(); view.editingId = null; renderAll();
-  }
-
-  $('btnBackupDir').hidden = !canPickDir;
-  $('btnBackupDir').onclick = async () => {
-    try { alert(`백업 폴더: ${(await backupDir(true)).name}`); }
-    catch (e) { if (e.name !== 'AbortError') alert('폴더 선택 실패: ' + e.message); }
-  };
-
-  $('btnExport').onclick = async () => {
-    const json = JSON.stringify(data, null, 2);
-    // 빈 데이터로 기존 백업을 덮어써 날리는 사고 방지
-    if (!data.shifts.length && !data.workplaces.length && !confirm('현재 기록이 비어 있습니다. 빈 데이터로 백업을 덮어쓸까요?')) return;
-    if (!canPickDir) {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-      a.download = BACKUP_FILE;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-      return;
-    }
-    try {
-      const dir = await backupDir();
-      const w = await (await dir.getFileHandle(BACKUP_FILE, { create: true })).createWritable();
-      await w.write(json);
-      await w.close();
-      alert(`${dir.name}/${BACKUP_FILE}에 저장했습니다.`);
-    } catch (e) {
-      if (e.name !== 'AbortError') alert('내보내기 실패: ' + e.message);
-    }
-  };
-
-  $('btnImport').onclick = async () => {
-    if (!canPickDir) return $('importFile').click();
-    try {
-      const dir = await backupDir();
-      importText(await (await (await dir.getFileHandle(BACKUP_FILE)).getFile()).text());
-    } catch (e) {
-      if (e.name === 'NotFoundError') alert(`백업 폴더에 ${BACKUP_FILE}이 없습니다. 먼저 내보내기를 하거나 '백업 폴더'로 폴더를 바꾸세요.`);
-      else if (e.name !== 'AbortError') alert('가져오기 실패: ' + e.message);
-    }
-  };
-  $('importFile').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    e.target.value = '';
-    if (!file) return;
-    try { importText(await file.text()); }
-    catch (err) { alert('가져오기 실패: ' + err.message); }
-  });
-
   // ───────── 테마 ─────────
   function renderThemeBtn() {
     const dark = document.documentElement.dataset.theme !== 'light';
@@ -786,8 +703,12 @@
   // ───────── 시작 ─────────
   function renderAll() { renderPunch(); renderCalendar(); renderDay(); renderPay(); }
   renderThemeBtn();
-  renderAll();
-  if (!data.workplaces.length) openWpDialog();
+  load().then(() => {
+    renderAll();
+    if (!data.workplaces.length) openWpDialog();
+  }, (e) => {
+    document.querySelector('main').innerHTML = `<section class="card">서버에 연결할 수 없습니다. 집 PC에서 서버(node server.js)가 실행 중인지 확인하세요.<p class="hint">${esc(e.message)}</p></section>`;
+  });
 
   // 임금 계산 자체 점검: index.html?test 로 열고 콘솔 확인. 실제 데이터는 건드리지 않는다.
   if (new URLSearchParams(location.search).has('test')) {
@@ -810,8 +731,10 @@
     console.log('알바 기록장 자체 점검 완료 (실패가 있으면 위에 Assertion failed 표시)');
   }
 
-  // 다른 탭에서 데이터가 바뀌면 동기화
-  window.addEventListener('storage', (e) => { if (e.key === KEY) { data = load(); renderAll(); } });
+  // 다른 기기에서 바꾼 내용을 이 탭으로 돌아올 때 반영 (입력 중일 때는 건드리지 않음)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !view.editingId && !wpDialog.open) saving.then(load).then(renderAll).catch(() => {});
+  });
 })();
 </script>
 </body>
