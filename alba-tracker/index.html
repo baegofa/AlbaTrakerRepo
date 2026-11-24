@@ -107,7 +107,7 @@
   .cell.sat .num { color: var(--sat); }
   .chip {
     font-size: 11px; line-height: 1.25; border-radius: 4px; padding: 1px 4px; display: flex; flex-direction: column; overflow: hidden;
-    border-left: 3px solid var(--c); background: color-mix(in srgb, var(--c) 22%, transparent);
+    border-left: 3px solid var(--c); background: color-mix(in srgb, var(--heat, var(--c)) 30%, transparent);
   }
   .chip span:first-child { word-break: keep-all; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .chip .hol { color: var(--sun); }
@@ -240,7 +240,14 @@
     return m ? `${h}시간 ${m}분` : `${h}시간`;
   };
   const fmtShort = (min) => (Math.round(min / 6) / 10) + 'h';
-  const fmt12 = (t) => { const [h, m] = t.split(':').map(Number); return `${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${pad(m)}`; };
+  // 하루 근무시간에 따른 칩 배경색: 0시간 근무지색 → 4시간 노랑 → 8시간 이상 빨강
+  const heatColor = (min) => {
+    const t = Math.min(Math.max(min, 0) / 480, 1);
+    return t <= 0.5
+      ? `color-mix(in srgb, var(--c) ${Math.round((1 - t * 2) * 100)}%, #ffc94d)`
+      : `color-mix(in srgb, #ffc94d ${Math.round((2 - t * 2) * 100)}%, #ff4d4d)`;
+  };
+  const fmt12 =(t) => { const [h, m] = t.split(':').map(Number); return `${h < 12 ? '오전' : '오후'} ${h % 12 || 12}:${pad(m)}`; };
 
   // 12시간제 시간 선택: 끝없이 도는 기본 time 입력 대신 끝이 있는 목록(오전·오후 / 시 / 5분 단위)
   function timeSelect(name, label, value) {
@@ -465,12 +472,13 @@
       const inMonth = d.getMonth() === month;
       const cls = ['cell', inMonth ? '' : 'other', key === todayStr ? 'today' : '', key === view.selected ? 'selected' : '',
         d.getDay() === 0 ? 'sun' : '', d.getDay() === 6 ? 'sat' : ''].filter(Boolean).join(' ');
+      const dayMin = list.reduce((a, s) => a + (wpById(s.wpId) ? shiftStats(s).work : 0), 0);
       const chips = list.map((s) => {
         const wp = wpById(s.wpId);
         if (!wp) return '';
         const st = shiftStats(s);
         if (inMonth) { monthMin += st.work; monthDays.add(key); }
-        return `<div class="chip" style="--c:${safeColor(wp.color)}"><span>${esc(wp.name)}</span><span>${fmtShort(st.work)}${s.holiday ? ' <b class="hol">휴</b>' : ''}</span></div>`;
+        return `<div class="chip" style="--c:${safeColor(wp.color)};--heat:${heatColor(dayMin)}"><span>${esc(wp.name)}</span><span>${fmtShort(st.work)}${s.holiday ? ' <b class="hol">휴</b>' : ''}</span></div>`;
       }).join('');
       html += `<button type="button" class="${cls}" data-date="${key}" aria-label="${d.getMonth() + 1}월 ${d.getDate()}일, 근무 ${list.length}건"><span class="num">${d.getDate()}</span>${chips}</button>`;
     }
@@ -740,6 +748,9 @@
     eq('30일 마감, 2월 말일 다음날 시작', periodFor('2026-03-01', 30), { start: '2026-03-01', end: '2026-03-30' });
     const r = summarize(cafe, '2026-11-01', '2026-11-30');
     eq('12시간제 표시', ['00:05', '11:55', '12:00', '23:30'].map(fmt12), ['오전 12:05', '오전 11:55', '오후 12:00', '오후 11:30']);
+    eq('근무시간 색', [0, 240, 480, 600].map(heatColor), [
+      'color-mix(in srgb, var(--c) 100%, #ffc94d)', 'color-mix(in srgb, var(--c) 0%, #ffc94d)',
+      'color-mix(in srgb, #ffc94d 0%, #ff4d4d)', 'color-mix(in srgb, #ffc94d 0%, #ff4d4d)']);
     eq('11월 합계', [r.base, r.night, r.hol, r.weekly, r.total], [365000, 57500, 50000, 58000, 530500]);
     data = real;
     console.log('알바 기록장 자체 점검 완료 (실패가 있으면 위에 Assertion failed 표시)');
