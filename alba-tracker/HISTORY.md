@@ -57,10 +57,10 @@ flowchart LR
         m1 --> c5["7ee0742<br/>12시간제 입력"] --> c6["18a88fa<br/>칩 색"] --> c7["b806d8c<br/>날짜 칸 색"] --> c8["개발 과정 문서"]
     end
     subgraph main["main (GitHub)"]
-        r1["74c1dd2<br/>Initial commit"]
-        mm["feat → main 병합"]
+        r1["74c1dd2<br/>Initial commit"] --> pr["c0caaa4<br/>PR #1 병합"] --> mm["ebd7bb8<br/>개선 사항 병합"]
     end
     r1 --> m1
+    m1 --> pr
     c8 --> mm
 ```
 
@@ -76,7 +76,10 @@ flowchart LR
 | 35bbf8c | 11-25 | 원격 main의 README 초기 커밋 병합 |
 | 7ee0742 | 11-25 | 근무 시간 입력을 12시간제·5분 단위 목록으로 바꾸고 달력 표시 개선 |
 | 18a88fa | 11-25 | 달력 칩 색을 하루 근무시간에 따라 그라데이션으로 표시 |
+| c0caaa4 | 11-25 | PR #1 병합 (서버 구축까지 main 반영) |
 | b806d8c | 11-25 | 날짜 칸 전체를 근무시간 색으로 칠하고 칩을 별도 칸으로 표시 |
+| da73fd8 | 11-25 | 개발 과정 트리 문서(HISTORY.md) 추가 |
+| ebd7bb8 | 11-25 | 개선 사항 main 병합 |
 
 ## 4. 남은 일
 
