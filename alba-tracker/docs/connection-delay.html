@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>접속 지연 원인</title>
+<style>
+  body { margin: 0; background: #12141a; color: #e8eaf0; font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif; }
+  .wrap { max-width: 1800px; margin: 0 auto; padding: 16px; }
+  svg { width: 100%; height: auto; display: block; }
+  .note { color: #8b93a5; font-size: 14px; text-align: center; margin: 4px 0 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <svg id="map" viewBox="0 0 2000 1100" role="img" aria-label="재부팅 직후 폰 첫 접속 지연 원인 분석 마인드맵"></svg>
+  <p class="note">2026-11-25 04:44 측정 기준 · Tailscale 내부 로그는 관리자 권한이 필요해 확인하지 못했으므로, 원인은 측정값에 근거한 추정입니다.</p>
+</div>
+<script>
+// 데이터만 바꾸면 마인드맵이 다시 그려진다. side: -1 왼쪽, 1 오른쪽
+const CENTER = { x: 1000, y: 550 };
+const BRANCHES = [
+  { side: -1, y: 250, color: '#38bdf8', title: '측정 결과', sub: '04:44 직접 측정', items: [
+    ['서버 자동 시작 정상', '부팅 04:40:24 → 서버 04:40:40'],
+    ['HTTPS 응답 빠름', '첫 요청 0.065초 · 이후 0.013초'],
+    ['인증서 이미 발급됨', '03:53 발급 (재부팅 전)'],
+    ['현재 직접 연결', '폰 ↔ PC 118ms, 중계 없음'],
+    ['가장 가까운 중계: 홍콩', '61ms · 한국 중계 서버 없음'],
+    ['폰은 다른 망', 'PC와 공인 IP 다름 (모바일 추정)'],
+  ] },
+  { side: -1, y: 640, color: '#2dd4bf', title: '원인 아님', sub: '측정으로 제외', items: [
+    ['node 서버', '응답 정상 · 데이터 그대로'],
+    ['HTTPS 인증서 발급', '이미 발급된 인증서 사용'],
+    ['서버 자동 시작', '재부팅 후 정상 실행 확인'],
+  ] },
+  { side: -1, y: 910, color: '#4ade80', title: '확인 방법', sub: '추정 검증', items: [
+    ['지금 다시 접속', '바로 열리면 추정이 맞음'],
+    ['매번 느리다면', '걸린 시간(초) 기록 → 다른 원인'],
+    ['정확히 보려면', '관리자 권한으로 Tailscale 로그'],
+  ] },
+  { side: 1, y: 220, color: '#fb923c', title: '추정 원인', sub: '연결 재수립 지연', items: [
+    ['① 연결 정보 변경', '재부팅으로 갱신 → 폰은 옛 경로 시도'],
+    ['② 홍콩 중계 경유', '직접 연결 전, 왕복마다 지연 누적'],
+    ['③ 통신사 망(NAT)', '직접 경로 찾기에 시간 소요'],
+    ['④ 배터리 절약 모드', '잠든 Tailscale 앱이 깨어나는 시간'],
+  ] },
+  { side: 1, y: 560, color: '#facc15', title: '연결 과정', sub: '재부팅 → 첫 접속', items: [
+    ['04:40:24 PC 부팅', ''],
+    ['04:40:40 서버 자동 시작', ''],
+    ['Tailscale 재접속', '새 연결 정보를 제어 서버에 등록'],
+    ['폰이 새 정보 수신', '홍콩 중계로 먼저 연결'],
+    ['직접 연결로 전환', '이후 접속은 빠름'],
+  ] },
+  { side: 1, y: 915, color: '#a78bfa', title: '결정할 사항', sub: '선택지 정리', items: [
+    ['A. 배터리 최적화 해제 (추천)', '앱 → Tailscale → 배터리 → 제한 없음'],
+    ['B. 부팅 1분 뒤 접속', '설정 변경 없이 습관으로 해결'],
+    ['C. 그대로 감수', '재부팅 직후 첫 접속만 느림'],
+    ['D. 한국 중계 서버 운영', '비추천: 서버 하나 더 관리'],
+  ] },
+];
+
+const NS = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('map');
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const BOX = { w: 300, h: 96 };
+const CBOX = { w: 340, h: 260 };
+const SPACING = 66;
+
+let h = `<defs><filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+  <feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
+
+for (const b of BRANCHES) {
+  const bx = CENTER.x + b.side * 400;
+  const inner = bx - b.side * BOX.w / 2;  // 가운데를 향한 상자 가장자리
+  const outer = bx + b.side * BOX.w / 2;  // 바깥 가장자리
+  const x0 = CENTER.x + b.side * CBOX.w / 2;
+  const y0 = Math.max(CENTER.y - 90, Math.min(CENTER.y + 90, b.y));
+  const mx = (x0 + inner) / 2;
+  h += `<path d="M${x0} ${y0} C${mx} ${y0}, ${mx} ${b.y}, ${inner} ${b.y}" fill="none" stroke="${b.color}" stroke-width="6" stroke-linecap="round" filter="url(#glow)"/>`;
+  h += `<rect x="${bx - BOX.w / 2}" y="${b.y - BOX.h / 2}" width="${BOX.w}" height="${BOX.h}" rx="18" fill="#181b24" stroke="${b.color}" stroke-width="4" filter="url(#glow)"/>`;
+  h += `<text x="${bx}" y="${b.y - 4}" text-anchor="middle" font-size="32" font-weight="700" fill="#f3f4f8">${esc(b.title)}</text>`;
+  h += `<text x="${bx}" y="${b.y + 30}" text-anchor="middle" font-size="19" fill="#b8bfcf">(${esc(b.sub)})</text>`;
+
+  const ax = outer + b.side * 40; // 항목 밑줄이 가지와 만나는 점
+  b.items.forEach(([t, s], i) => {
+    const iy = b.y + (i - (b.items.length - 1) / 2) * SPACING;
+    const uy = iy + (s ? 30 : 12);
+    const anchor = b.side < 0 ? 'end' : 'start';
+    const tx = ax + b.side * 8;
+    const cx = (outer + ax) / 2;
+    h += `<path d="M${outer} ${b.y} C${cx} ${b.y}, ${cx} ${uy}, ${ax} ${uy}" fill="none" stroke="${b.color}" stroke-width="3" stroke-linecap="round" opacity=".9"/>`;
+    h += `<g class="item" data-side="${b.side}" data-ax="${ax}">
+      <text x="${tx}" y="${iy}" text-anchor="${anchor}" font-size="24" font-weight="600" fill="#f3f4f8">${esc(t)}</text>
+      ${s ? `<text x="${tx}" y="${iy + 22}" text-anchor="${anchor}" font-size="16" fill="#aab2c3">${esc(s)}</text>` : ''}
+      <line x1="${ax}" y1="${uy}" x2="${ax}" y2="${uy}" stroke="${b.color}" stroke-width="3" stroke-linecap="round" opacity=".9"/>
+    </g>`;
+  });
+}
+
+// 가운데 노드
+const cx = CENTER.x - CBOX.w / 2, cy = CENTER.y - CBOX.h / 2;
+h += `<rect x="${cx}" y="${cy}" width="${CBOX.w}" height="${CBOX.h}" rx="26" fill="#151a26" stroke="#60a5fa" stroke-width="5" filter="url(#glow)"/>
+  <rect x="${cx + 12}" y="${cy + 12}" width="${CBOX.w - 24}" height="${CBOX.h - 24}" rx="18" fill="none" stroke="#2dd4bf" stroke-width="2" opacity=".7"/>
+  <text x="${CENTER.x}" y="${CENTER.y - 50}" text-anchor="middle" font-size="40" font-weight="800" fill="#7dd3fc">접속 지연</text>
+  <text x="${CENTER.x}" y="${CENTER.y - 2}" text-anchor="middle" font-size="40" font-weight="800" fill="#7dd3fc">원인 분석</text>
+  <text x="${CENTER.x}" y="${CENTER.y + 42}" text-anchor="middle" font-size="20" fill="#5eead4">재부팅 직후 폰 첫 접속</text>
+  <text x="${CENTER.x}" y="${CENTER.y + 78}" text-anchor="middle" font-size="18" fill="#facc15">결론: 서버 문제 아님</text>
+  <text x="${CENTER.x}" y="${CENTER.y + 102}" text-anchor="middle" font-size="18" fill="#facc15">연결 재수립 지연 (추정)</text>`;
+
+svg.innerHTML = h;
+
+// 밑줄 길이를 실제 글자 폭에 맞춘다
+svg.querySelectorAll('g.item').forEach((g) => {
+  const side = Number(g.dataset.side), ax = Number(g.dataset.ax);
+  const w = Math.max(...[...g.querySelectorAll('text')].map((t) => t.getComputedTextLength())) + 16;
+  g.querySelector('line').setAttribute('x2', ax + side * w);
+});
+</script>
+</body>
+</html>
